@@ -574,6 +574,122 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         PhoneAuthProvider.verifyPhoneNumber(options)
     }
 
+    /**
+     * UNIFIED OTP RESULT HANDLER — called after any successful Firebase Phone Auth.
+     * Whether the user is signing in OR creating a new account, the logic is:
+     *   1. Check Firestore for an existing ACTIVE membership (idempotency gate)
+     *   2. If found  → load the existing business, sync down, done.
+     *   3. If partner invitation exists for this phone → accept it, load that business.
+     *   4. If none found AND isNewAccount=true → create a brand new business.
+     *   5. If none found AND isNewAccount=false → show error (no account linked).
+     * No local data is ever wiped inside this function.
+     */
+    private suspend fun handlePhoneAuthSuccess(
+        rawPhone: String,
+        businessName: String = "",
+        ownerName: String = "",
+        isNewAccount: Boolean = false,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        val normalizedPhone = authRepository.normalizePhone(rawPhone)
+        val firebaseUser = firebaseAuth?.currentUser
+        if (firebaseUser == null) {
+            onComplete(false, "Firebase authentication failed. Please try again.")
+            return
+        }
+        val uid = firebaseUser.uid
+
+        // Step 1 — check for existing memberships (covers returning owners + returning partners)
+        val memberships = authRepository.checkExistingMemberships(uid)
+        if (memberships.isNotEmpty()) {
+            val activeMembership = memberships.first()
+            authRepository.loadBusinessData(activeMembership.businessId)
+            val current = settings.value
+            // Only update businessId if it is actually changing, never wipe data
+            val newBizId = activeMembership.businessId
+            if (current.businessId != newBizId) {
+                repository.updateSettings(
+                    current.copy(
+                        isLoggedIn = true,
+                        activePartnerPhone = normalizedPhone,
+                        businessId = newBizId,
+                        sharedAccountId = newBizId
+                    )
+                )
+            } else {
+                repository.updateSettings(current.copy(isLoggedIn = true, activePartnerPhone = normalizedPhone))
+            }
+            syncManager.synchronize(isOnline = isEffectiveOnline.value)
+            onComplete(true, null)
+            return
+        }
+
+        // Step 2 — no direct membership; check if a partner invitation exists for this phone
+        val partnerMembership = authRepository.acceptPartnerInvitation(uid, normalizedPhone, ownerName.ifBlank { "Partner" })
+        if (partnerMembership != null) {
+            authRepository.loadBusinessData(partnerMembership.businessId)
+            val current = settings.value
+            repository.updateSettings(
+                current.copy(
+                    isLoggedIn = true,
+                    activePartnerPhone = normalizedPhone,
+                    businessId = partnerMembership.businessId,
+                    sharedAccountId = partnerMembership.businessId
+                )
+            )
+            syncManager.synchronize(isOnline = isEffectiveOnline.value)
+            onComplete(true, null)
+            return
+        }
+
+        // Step 3 — truly new user: create a business only if the Create Account tab was used
+        if (isNewAccount) {
+            val user = authRepository.syncUserToFirestore(ownerName.ifBlank { "Owner" })
+            if (user == null) {
+                onComplete(false, "Failed to register user profile.")
+                return
+            }
+            val business = authRepository.getOrCreateOwnerBusiness(
+                ownerUid = uid,
+                businessName = businessName,
+                ownerName = ownerName,
+                phone = normalizedPhone
+            )
+            val current = settings.value
+            val ownerPartner = com.example.data.entity.PartnerEntity(
+                uuid = uid,   // deterministic: UID is the stable identity
+                businessId = business.businessId,
+                name = "${ownerName.ifBlank { "Owner" }} (Owner)",
+                phone = normalizedPhone,
+                role = "OWNER",
+                isSynced = false,
+                syncStatus = com.example.data.entity.SyncStatus.PENDING.name,
+                isCurrentActive = true
+            )
+            // REPLACE by uuid — idempotent even if called twice
+            val existing = database.partnerDao().getPartnerByUuid(uid)
+            if (existing == null) {
+                database.partnerDao().insertPartner(ownerPartner)
+            }
+            repository.updateSettings(
+                current.copy(
+                    isLoggedIn = true,
+                    activePartnerPhone = normalizedPhone,
+                    businessId = business.businessId,
+                    sharedAccountId = business.businessId,
+                    businessName = business.businessName,
+                    ownerName = ownerName.ifBlank { "Owner" },
+                    activePartnerName = "${ownerName.ifBlank { "Owner" }} (Owner)"
+                )
+            )
+            pushUnsyncedToCloud()
+            onComplete(true, null)
+        } else {
+            // Sign In tab but no account found
+            onComplete(false, "No business account is linked to this phone number. Please use \"Create Account\" to register.")
+        }
+    }
+
     fun verifyPhoneOtp(
         verificationId: String,
         otp: String,
@@ -582,90 +698,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val auth = firebaseAuth
         if (auth == null || verificationId == "mock_verification_id") {
-            // Local fallback logic
             viewModelScope.launch {
                 _isSyncing.value = true
                 delay(800)
-                val current = settings.value
-                repository.updateSettings(
-                    current.copy(
-                        isLoggedIn = true,
-                        activePartnerPhone = phone
-                    )
-                )
+                handlePhoneAuthSuccess(phone, isNewAccount = false, onComplete = onComplete)
                 _isSyncing.value = false
-                onComplete(true, null)
             }
             return
         }
-
         viewModelScope.launch {
             _isSyncing.value = true
             try {
                 val credential = PhoneAuthProvider.getCredential(verificationId, otp)
                 auth.signInWithCredential(credential).await()
-                
-                val user = authRepository.syncUserToFirestore("Partner")
-                if (user != null) {
-                    val memberships = authRepository.checkExistingMemberships(user.uid)
-                    if (memberships.isNotEmpty()) {
-                        val activeMembership = memberships.first()
-                        authRepository.loadBusinessData(activeMembership.businessId)
-                        
-                        val current = settings.value
-                        repository.updateSettings(
-                            current.copy(
-                                isLoggedIn = true,
-                                activePartnerPhone = phone,
-                                businessId = activeMembership.businessId
-                            )
-                        )
-                        pushUnsyncedToCloud()
-                        _isSyncing.value = false
-                        onComplete(true, null)
-                    } else {
-                        _isSyncing.value = false
-                        onComplete(false, "No business account linked to this phone number.")
-                    }
-                } else {
-                    _isSyncing.value = false
-                    onComplete(false, "Failed to sync user data.")
-                }
+                handlePhoneAuthSuccess(phone, isNewAccount = false, onComplete = onComplete)
             } catch (e: Exception) {
-                _isSyncing.value = false
                 onComplete(false, e.message ?: "Authentication failed")
+            } finally {
+                _isSyncing.value = false
             }
         }
     }
 
-    private suspend fun clearLocalDataForCleanAccount(
+    /**
+     * Safely switches the active business context WITHOUT wiping user data.
+     * Only updates AppSettings to point at the new businessId, then triggers
+     * a bidirectional sync to pull the new business's records into Room.
+     */
+    private suspend fun switchBusinessContext(
         newBusinessId: String,
         bName: String,
         oName: String,
         contactInfo: String,
+        role: String = "OWNER",
         photoUrl: String = ""
     ) {
-        // Completely clear existing demo/previous local database tables
-        database.customerDao().deleteAllCustomers()
-        database.jobEntryDao().deleteAllJobs()
-        database.expenseDao().deleteAllExpenses()
-        database.withdrawalDao().deleteAllWithdrawals()
-        database.tractorDao().deleteAllTractors()
-        database.partnerDao().deleteAllPartners()
-
-        // Create the sole Owner Partner for this clean account
-        val ownerPartner = PartnerEntity(
-            uuid = java.util.UUID.randomUUID().toString(),
-            businessId = newBusinessId,
-            name = "$oName (Owner)",
-            phone = contactInfo,
-            role = "OWNER",
-            isSynced = false,
-            syncStatus = com.example.data.entity.SyncStatus.PENDING.name,
-            isCurrentActive = true
-        )
-        database.partnerDao().insertPartner(ownerPartner)
-
         val current = settings.value
         repository.updateSettings(
             current.copy(
@@ -674,60 +741,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 businessName = bName.ifBlank { "My Agri Tractor Service" },
                 ownerName = oName.ifBlank { "Fleet Owner" },
                 businessPhone = contactInfo,
-                activePartnerName = "$oName (Owner)",
+                activePartnerName = "$oName ($role)",
                 activePartnerPhone = contactInfo,
                 profilePhotoUri = photoUrl,
-                isLoggedIn = true,
-                lastSyncTime = 0L
+                isLoggedIn = true
             )
         )
+        // Pull the new business's cloud data into Room without destroying existing local records
+        syncManager.synchronize(isOnline = isEffectiveOnline.value)
     }
 
     private suspend fun switchAccountAndSync(
         profile: com.example.data.sync.UserAccountProfile
     ) {
-        // Clear existing tables so other business data doesn't bleed through
-        database.customerDao().deleteAllCustomers()
-        database.jobEntryDao().deleteAllJobs()
-        database.expenseDao().deleteAllExpenses()
-        database.withdrawalDao().deleteAllWithdrawals()
-        database.tractorDao().deleteAllTractors()
-        database.partnerDao().deleteAllPartners()
-
         val bName = profile.businessName.ifBlank { "My Agri Tractor Service" }
         val oName = profile.ownerName.ifBlank { "Fleet Owner" }
         val contactInfo = profile.phone.ifBlank { profile.email }
-
-        val current = settings.value
-        repository.updateSettings(
-            current.copy(
-                businessId = profile.businessId,
-                sharedAccountId = profile.businessId,
-                businessName = bName,
-                ownerName = oName,
-                businessPhone = contactInfo,
-                activePartnerName = "$oName (${profile.role.ifBlank { "Owner" }})",
-                activePartnerPhone = contactInfo,
-                profilePhotoUri = profile.profilePhotoUri,
-                isLoggedIn = true,
-                lastSyncTime = 0L
-            )
-        )
-
-        val ownerPartner = PartnerEntity(
-            uuid = java.util.UUID.randomUUID().toString(),
-            businessId = profile.businessId,
-            name = "$oName (${profile.role.ifBlank { "Owner" }})",
-            phone = contactInfo,
+        // No wipe — just switch context and sync
+        switchBusinessContext(
+            newBusinessId = profile.businessId,
+            bName = bName,
+            oName = oName,
+            contactInfo = contactInfo,
             role = profile.role.ifBlank { "OWNER" },
-            isSynced = true,
-            syncStatus = com.example.data.entity.SyncStatus.SYNCED.name,
-            isCurrentActive = true
+            photoUrl = profile.profilePhotoUri
         )
-        database.partnerDao().insertPartner(ownerPartner)
-
-        // Bi-directional synchronization: Download this business's tractors, customers, jobs from Firestore
-        syncManager.synchronize(isOnline = isEffectiveOnline.value)
     }
 
     fun signInWithGoogleDirect(
@@ -761,34 +799,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // New Account Creation with Google
-                val newBusinessId = existingProfile?.businessId?.ifBlank { null }
-                    ?: ("TRAC-" + java.util.UUID.randomUUID().toString().take(8).uppercase())
+                // New Account Creation with Google — use idempotency gate
+                val uid = firebaseAuth?.currentUser?.uid
                 val finalBName = if (businessName.isNotBlank()) businessName else "$displayName's Fleet"
                 val finalOName = if (ownerName.isNotBlank()) ownerName else displayName
 
-                // Clear previous/demo data for pristine new account
-                clearLocalDataForCleanAccount(
-                    newBusinessId = newBusinessId,
-                    bName = finalBName,
-                    oName = finalOName,
-                    contactInfo = cleanEmail,
-                    photoUrl = photoUrl
-                )
-
-                val newProfile = com.example.data.sync.UserAccountProfile(
-                    email = cleanEmail,
-                    phone = "",
-                    businessId = newBusinessId,
-                    businessName = finalBName,
-                    ownerName = finalOName,
-                    role = "OWNER",
-                    authProvider = "GOOGLE",
-                    profilePhotoUri = photoUrl,
-                    createdAt = System.currentTimeMillis()
-                )
-                accountManager.saveAccountProfile(newProfile)
-
+                if (uid != null) {
+                    val business = authRepository.getOrCreateOwnerBusiness(
+                        ownerUid = uid,
+                        businessName = finalBName,
+                        ownerName = finalOName,
+                        phone = cleanEmail
+                    )
+                    switchBusinessContext(
+                        newBusinessId = business.businessId,
+                        bName = business.businessName,
+                        oName = finalOName,
+                        contactInfo = cleanEmail,
+                        photoUrl = photoUrl
+                    )
+                } else {
+                    // Fallback: AccountManager path (email-keyed, no Firebase UID available)
+                    val newBusinessId = existingProfile?.businessId?.ifBlank { null }
+                        ?: ("TRAC-" + java.util.UUID.randomUUID().toString().take(8).uppercase())
+                    val newProfile = com.example.data.sync.UserAccountProfile(
+                        email = cleanEmail,
+                        phone = "",
+                        businessId = newBusinessId,
+                        businessName = finalBName,
+                        ownerName = finalOName,
+                        role = "OWNER",
+                        authProvider = "GOOGLE",
+                        profilePhotoUri = photoUrl,
+                        createdAt = System.currentTimeMillis()
+                    )
+                    accountManager.saveAccountProfile(newProfile)
+                    switchBusinessContext(
+                        newBusinessId = newBusinessId,
+                        bName = finalBName,
+                        oName = finalOName,
+                        contactInfo = cleanEmail,
+                        photoUrl = photoUrl
+                    )
+                }
                 pushUnsyncedToCloud()
                 _isSyncing.value = false
                 onComplete(true, null)
@@ -1033,22 +1086,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val newBusinessId = "TRAC-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
+                // Use Firebase UID for idempotent business creation via AuthRepository
+                val uid = firebaseAuth?.currentUser?.uid
+                val business = if (uid != null) {
+                    authRepository.getOrCreateOwnerBusiness(
+                        ownerUid = uid,
+                        businessName = bName,
+                        ownerName = oName,
+                        phone = cleanPhone
+                    )
+                } else {
+                    // Fallback: generate a random ID (only if no Firebase Auth UID)
+                    val fallbackBizId = "TRAC-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
+                    com.example.data.entity.BusinessEntity(
+                        businessId = fallbackBizId,
+                        businessName = bName,
+                        ownerUserId = "",
+                        businessPhone = cleanPhone
+                    )
+                }
 
-                // CLEAN SLATE: Wipe demo/previous data for newly created account
-                clearLocalDataForCleanAccount(
-                    newBusinessId = newBusinessId,
-                    bName = bName,
-                    oName = oName,
-                    contactInfo = cleanPhone
-                )
-
-                // Save profile to Firestore /users and local registry
+                // Save profile to AccountManager (for legacy email-based lookup)
                 val profile = com.example.data.sync.UserAccountProfile(
                     email = cleanEmail,
                     phone = cleanPhone,
-                    businessId = newBusinessId,
-                    businessName = bName,
+                    businessId = business.businessId,
+                    businessName = business.businessName,
                     ownerName = oName,
                     role = "OWNER",
                     authProvider = "EMAIL",
@@ -1056,8 +1119,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     createdAt = System.currentTimeMillis()
                 )
                 accountManager.saveAccountProfile(profile)
-
-                // Push initial setup to Cloud Firestore
+                // Switch to the new business context without wiping data
+                switchBusinessContext(
+                    newBusinessId = business.businessId,
+                    bName = business.businessName,
+                    oName = oName,
+                    contactInfo = cleanPhone
+                )
                 pushUnsyncedToCloud()
                 _isSyncing.value = false
                 onComplete(true, null)
@@ -1077,51 +1145,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ownerName: String,
         onComplete: (Boolean, String?) -> Unit
     ) {
-        val cleanPhone = phone.trim()
         val bName = businessName.trim().ifBlank { "My Agri Tractor Service" }
         val oName = ownerName.trim().ifBlank { "Fleet Owner" }
+        val auth = firebaseAuth
 
         viewModelScope.launch {
             _isSyncing.value = true
             try {
-                val auth = firebaseAuth
                 if (auth != null && verificationId != "mock_verification_id") {
-                    try {
-                        val credential = PhoneAuthProvider.getCredential(verificationId, otp)
-                        auth.signInWithCredential(credential).await()
-                    } catch (e: Exception) {
-                        Log.w("MainViewModel", "Phone credential signIn fallback: ${e.message}")
-                        try {
-                            auth.signInAnonymously().await()
-                        } catch (e2: Exception) {
-                            Log.w("MainViewModel", "Anonymous signin note: ${e2.message}")
-                        }
-                    }
+                    val credential = PhoneAuthProvider.getCredential(verificationId, otp)
+                    auth.signInWithCredential(credential).await()
                 }
-
-                val user = authRepository.syncUserToFirestore(oName)
-                if (user != null) {
-                    val business = authRepository.createBusiness(user.uid, bName, oName, cleanPhone)
-                    
-                    // CLEAN SLATE: Wipe demo/previous data
-                    clearLocalDataForCleanAccount(
-                        newBusinessId = business.businessId,
-                        bName = business.businessName,
-                        oName = oName,
-                        contactInfo = cleanPhone
-                    )
-                    
-                    pushUnsyncedToCloud()
-                    _isSyncing.value = false
-                    onComplete(true, null)
-                } else {
-                    _isSyncing.value = false
-                    onComplete(false, "Failed to register user.")
-                }
+                // Unified handler: checks memberships first, creates business only if none found
+                handlePhoneAuthSuccess(
+                    rawPhone = phone,
+                    businessName = bName,
+                    ownerName = oName,
+                    isNewAccount = true,
+                    onComplete = onComplete
+                )
             } catch (e: Exception) {
-                _isSyncing.value = false
                 Log.e("MainViewModel", "createAccountWithPhone error: ${e.message}", e)
                 onComplete(false, e.message ?: "Phone registration failed")
+            } finally {
+                _isSyncing.value = false
             }
         }
     }

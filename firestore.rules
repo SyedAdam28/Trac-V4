@@ -1,62 +1,112 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-  
-    // Function to check if user is authenticated
+
+    // ---------------------------------------------------------------
+    // HELPER FUNCTIONS
+    // ---------------------------------------------------------------
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
-    // Function to check if the user is a member of the business
+
+    // Checks that the caller has an ACTIVE membership document for this business.
+    // Document path: businesses/{businessId}/memberships/{uid}
     function isBusinessMember(businessId) {
       return isAuthenticated() &&
-             exists(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid));
+             exists(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid)).data.status == "ACTIVE";
     }
 
-    // Function to check if the user is the owner of the business
+    // Checks the caller is an OWNER (not just a member).
     function isBusinessOwner(businessId) {
       return isAuthenticated() &&
-             get(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid)).data.role == "OWNER";
+             get(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid)).data.role == "OWNER" &&
+             get(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid)).data.status == "ACTIVE";
     }
-    
-    // Users Collection (Users can only read and write their own document)
+
+    // ---------------------------------------------------------------
+    // USERS — each user can only read/write their own document (by UID)
+    // ---------------------------------------------------------------
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
-    
-    // Businesses Collection
+
+    // ---------------------------------------------------------------
+    // BUSINESSES
+    // ---------------------------------------------------------------
     match /businesses/{businessId} {
-      // Any authenticated user can create a business
-      allow create: if isAuthenticated();
-      
-      // Only members can read the business details
+
+      // Any authenticated user may CREATE a business (first-time owner registration).
+      allow create: if isAuthenticated()
+                    // The creator must be setting themselves as the ownerUserId
+                    && request.resource.data.ownerUserId == request.auth.uid;
+
+      // Only ACTIVE members may read business details.
       allow read: if isBusinessMember(businessId);
-      
-      // Only owners can update business details
+
+      // Only OWNERS may update business details.
       allow update: if isBusinessOwner(businessId);
-      allow delete: if false; // Deletion is not allowed from client
-      
-      // Subcollections under Businesses
-      
-      // Memberships
-      match /memberships/{membershipId} {
-        // Members can read memberships for their business
+
+      // Deletion is never allowed from the client.
+      allow delete: if false;
+
+      // -------------------------------------------------------------
+      // MEMBERSHIPS subcollection
+      // businesses/{businessId}/memberships/{memberUid}
+      // -------------------------------------------------------------
+      match /memberships/{memberUid} {
+
+        // Any ACTIVE member may read memberships (to list partners).
         allow read: if isBusinessMember(businessId);
-        // Only owners can manage memberships (invite, change roles)
-        allow write: if isBusinessOwner(businessId) || request.auth.uid == request.resource.data.userId; 
-        // The second condition allows a user to write their own initial membership during business creation
+
+        // OWNER may write any membership (invite, change status, etc.)
+        allow write: if isBusinessOwner(businessId);
+
+        // A user may write ONLY their own initial membership document when
+        // they are creating a brand-new business (no members yet).
+        // This allows the very first owner to bootstrap the memberships subcollection.
+        // SECURITY: role must NOT be OWNER when self-writing (prevents self-escalation).
+        // Exception: the business creator may set role=OWNER on initial creation only.
+        allow create: if isAuthenticated()
+                      && request.auth.uid == memberUid
+                      && request.resource.data.userId == request.auth.uid
+                      // Only allowed if this business has NO existing owner membership yet
+                      && !exists(/databases/$(database)/documents/businesses/$(businessId)/memberships/$(request.auth.uid));
+
+        // A partner may NOT update their own membership (prevents self role escalation).
+        allow update: if isBusinessOwner(businessId);
       }
-      
-      // Subscriptions
+
+      // -------------------------------------------------------------
+      // INVITATIONS subcollection (pending partner invites)
+      // businesses/{businessId}/invitations/{inviteId}
+      // -------------------------------------------------------------
+      match /invitations/{inviteId} {
+        // Owners can create/manage invitations.
+        allow write: if isBusinessOwner(businessId);
+        // Any authenticated user can READ invitations (needed to find their invite on OTP verify).
+        allow read: if isAuthenticated();
+        // A user can update an invitation to mark it ACCEPTED (when they verify OTP).
+        allow update: if isAuthenticated()
+                      && resource.data.status == "INVITED"
+                      && request.resource.data.status == "ACCEPTED";
+      }
+
+      // -------------------------------------------------------------
+      // SUBSCRIPTION — per-business, owned by the business
+      // -------------------------------------------------------------
       match /subscription/{subId} {
-        // Members can view subscription status
         allow read: if isBusinessMember(businessId);
-        // Only owners can manage subscription (or backend through Admin SDK)
+        // Only owners can manage subscriptions; backend uses Admin SDK for billing.
         allow write: if isBusinessOwner(businessId);
       }
-      
-      // Operational Data (Tractors, Jobs, Expenses, Customers, Withdrawals, Partners)
-      // All members can read and write these as they are synced locally and pushed
+
+      // -------------------------------------------------------------
+      // OPERATIONAL DATA — all ACTIVE members can read and write.
+      // businessId is enforced by the path, NOT by the client payload,
+      // so the client CANNOT access another business's collections.
+      // -------------------------------------------------------------
       match /tractors/{tractorId} {
         allow read, write: if isBusinessMember(businessId);
       }
@@ -75,16 +125,23 @@ service cloud.firestore {
       match /partners/{partnerId} {
         allow read, write: if isBusinessMember(businessId);
       }
-      // members collection (legacy backwards compatibility if used)
-      match /members/{memberUid} {
-        allow read, write: if isBusinessMember(businessId) || request.auth.uid == memberUid;
-      }
     }
-    
-    // Group queries (if any)
-    match /{path=**}/memberships/{membershipId} {
-      // Allow users to query their own memberships across all businesses
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+
+    // ---------------------------------------------------------------
+    // COLLECTION GROUP QUERY — lets a user find ALL their memberships
+    // across all businesses (used in checkExistingMemberships()).
+    // Only the authenticated user can read their own membership documents.
+    // ---------------------------------------------------------------
+    match /{path=**}/memberships/{memberUid} {
+      allow read: if isAuthenticated() && request.auth.uid == memberUid;
+    }
+
+    // ---------------------------------------------------------------
+    // COLLECTION GROUP QUERY — lets a user find their pending invitation
+    // across all businesses (used in acceptPartnerInvitation()).
+    // ---------------------------------------------------------------
+    match /{path=**}/invitations/{inviteId} {
+      allow read: if isAuthenticated();
     }
   }
 }

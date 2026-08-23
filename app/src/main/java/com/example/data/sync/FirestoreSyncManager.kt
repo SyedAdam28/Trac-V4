@@ -109,9 +109,19 @@ class FirestoreSyncManager(
         }
 
         val businessId = getBusinessId()
-        if (businessId.isBlank()) {
-            Log.w(TAG, "No valid businessId found. Aborting sync.")
-            _syncState.value = SyncState.Error("No active business account found.")
+        // GUARD: never sync against the shared demo account or a blank businessId.
+        // Uploading to the demo account would expose user data to all demo users.
+        val blockedIds = setOf("", "AIDHUNT-TRAC-SHARED-01")
+        if (businessId in blockedIds) {
+            Log.w(TAG, "Sync blocked: businessId='$businessId' is invalid or shared demo account.")
+            _syncState.value = SyncState.Error("Please log in to sync your business data.")
+            return@withContext false
+        }
+        // GUARD: only sync when Firebase Auth user is authenticated
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+        if (currentUid == null) {
+            Log.w(TAG, "Sync blocked: no authenticated Firebase user.")
+            _syncState.value = SyncState.Error("Not logged in.")
             return@withContext false
         }
         val deviceId = getDeviceId()
@@ -157,35 +167,38 @@ class FirestoreSyncManager(
         }
     }
 
-    // ================= MEMBER SELF-REGISTRATION =================
-
     /**
-     * Writes the current Firebase Auth user into /businesses/{id}/members/{uid}.
-     * Uses SetOptions.merge() so it won't overwrite an existing role.
-     * Safe to call on every sync — idempotent.
+     * Self-registers the current Firebase user as a member of the given business.
+     * - Only writes if no membership document exists yet (idempotent).
+     * - Reads the actual role from the local Room membership table before writing.
+     *   This prevents a Partner device from overwriting their role with OWNER.
      */
     private suspend fun registerCurrentUserAsMember(db: FirebaseFirestore, businessId: String) {
         try {
             val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
             val memberRef = db.collection("businesses").document(businessId)
-                .collection("memberships").document(uid) // Use 'memberships' to comply with firestore.rules
-            
-            // Only set role if document doesn't exist yet to avoid overwriting OWNER -> PARTNER
+                .collection("memberships").document(uid)
+
+            // If the document already exists in Firestore, do nothing
             val existing = memberRef.get().await()
-            if (!existing.exists()) {
-                memberRef.set(
-                    mapOf(
-                        "membershipId" to uid,
-                        "businessId" to businessId,
-                        "userId" to uid,
-                        "role" to "OWNER",
-                        "status" to "ACTIVE",
-                        "createdAt" to System.currentTimeMillis(),
-                        "updatedAt" to System.currentTimeMillis()
-                    )
-                ).await()
-                Log.d(TAG, "Membership registered for businessId=$businessId uid=$uid")
-            }
+            if (existing.exists()) return
+
+            // Determine the correct role from the local Room membership cache
+            val localMembership = database.membershipDao().getMembership(businessId, uid)
+            val role = localMembership?.role ?: "PARTNER"  // default to PARTNER if unknown
+
+            memberRef.set(
+                mapOf(
+                    "membershipId" to uid,
+                    "businessId" to businessId,
+                    "userId" to uid,
+                    "role" to role,
+                    "status" to "ACTIVE",
+                    "createdAt" to System.currentTimeMillis(),
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            ).await()
+            Log.d(TAG, "Membership self-registered: businessId=$businessId uid=$uid role=$role")
         } catch (e: Exception) {
             Log.w(TAG, "Could not register membership (non-fatal): ${e.message}")
         }
@@ -193,12 +206,28 @@ class FirestoreSyncManager(
 
     // ================= UPLOAD LOGIC (Room -> Firestore) =================
 
+    /**
+     * Ensures every entity has a non-blank uuid before it is used as a
+     * Firestore document ID.  If the uuid was seeded blank (pre-migration
+     * records from before v4), we generate one now and persist it so the
+     * same record always maps to the same Firestore document.
+     */
+    private suspend fun ensureUuid(uuid: String, persistFn: suspend (String) -> Unit): String {
+        if (uuid.isNotBlank()) return uuid
+        val newUuid = UUID.randomUUID().toString()
+        try { persistFn(newUuid) } catch (_: Exception) {}
+        return newUuid
+    }
+
     private suspend fun uploadPendingCustomers(db: FirebaseFirestore, businessId: String, deviceId: String) {
         val pending = customerDao.getUnsyncedCustomers()
         for (c in pending) {
             try {
                 customerDao.updateSyncStatus(c.id, SyncStatus.SYNCING.name)
-                val dto = c.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(c.uuid) { newId ->
+                    customerDao.updateCustomer(c.copy(uuid = newId))
+                }
+                val dto = c.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("customers").document(dto.id)
                     .set(dto, SetOptions.merge()).await()
@@ -214,7 +243,10 @@ class FirestoreSyncManager(
         val pending = tractorDao.getUnsyncedTractors()
         for (t in pending) {
             try {
-                val dto = t.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(t.uuid) { newId ->
+                    tractorDao.updateTractor(t.copy(uuid = newId))
+                }
+                val dto = t.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("tractors").document(dto.id)
                     .set(dto, SetOptions.merge()).await()
@@ -229,7 +261,10 @@ class FirestoreSyncManager(
         val pending = partnerDao.getUnsyncedPartners()
         for (p in pending) {
             try {
-                val dto = p.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(p.uuid) { newId ->
+                    partnerDao.updatePartner(p.copy(uuid = newId))
+                }
+                val dto = p.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("partners").document(dto.id)
                     .set(dto, SetOptions.merge()).await()
@@ -245,7 +280,10 @@ class FirestoreSyncManager(
         for (j in pending) {
             try {
                 jobDao.updateSyncStatus(j.id, SyncStatus.SYNCING.name)
-                val dto = j.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(j.uuid) { newId ->
+                    jobDao.updateJob(j.copy(uuid = newId))
+                }
+                val dto = j.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("jobs").document(dto.id)
                     .set(dto, SetOptions.merge()).await()
@@ -262,7 +300,10 @@ class FirestoreSyncManager(
         for (ex in pending) {
             try {
                 expenseDao.updateSyncStatus(ex.id, SyncStatus.SYNCING.name)
-                val dto = ex.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(ex.uuid) { newId ->
+                    expenseDao.updateExpense(ex.copy(uuid = newId))
+                }
+                val dto = ex.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("expenses").document(dto.id)
                     .set(dto, SetOptions.merge()).await()
@@ -279,7 +320,10 @@ class FirestoreSyncManager(
         for (w in pending) {
             try {
                 withdrawalDao.updateSyncStatus(w.id, SyncStatus.SYNCING.name)
-                val dto = w.toFirestore(businessId, deviceId)
+                val safeUuid = ensureUuid(w.uuid) { newId ->
+                    withdrawalDao.updateWithdrawal(w.copy(uuid = newId))
+                }
+                val dto = w.copy(uuid = safeUuid).toFirestore(businessId, deviceId)
                 db.collection("businesses").document(businessId)
                     .collection("withdrawals").document(dto.id)
                     .set(dto, SetOptions.merge()).await()

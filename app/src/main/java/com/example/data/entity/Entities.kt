@@ -201,7 +201,9 @@ data class BusinessEntity(
 
 @Entity(tableName = "memberships")
 data class MembershipEntity(
-    @PrimaryKey val membershipId: String = UUID.randomUUID().toString(),
+    // membershipId must always be set to the user's Firebase UID.
+    // This makes inserts idempotent: inserting the same user twice is safe.
+    @PrimaryKey val membershipId: String,
     val businessId: String,
     val userId: String,
     val role: String, // "OWNER" or "PARTNER"
@@ -212,12 +214,14 @@ data class MembershipEntity(
 
 @Entity(tableName = "subscriptions")
 data class SubscriptionEntity(
-    @PrimaryKey val subscriptionId: String = UUID.randomUUID().toString(),
+    // subscriptionId must be deterministic: use "SUB-{businessId}".
+    // This prevents duplicate subscription rows for the same business.
+    @PrimaryKey val subscriptionId: String,
     val businessId: String,
     val planId: String = "TRIAL",
     val planName: String = "14-Day Free Trial",
     val startDate: Long = System.currentTimeMillis(),
-    val endDate: Long = System.currentTimeMillis() + (14L * 24 * 60 * 60 * 1000), // 14 days from now
+    val endDate: Long = System.currentTimeMillis() + (14L * 24 * 60 * 60 * 1000),
     val status: String = "TRIAL", // TRIAL, ACTIVE, EXPIRED, CANCELLED
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
