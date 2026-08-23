@@ -27,6 +27,7 @@ data class PartnerEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -46,6 +47,7 @@ data class TractorEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -66,6 +68,7 @@ data class CustomerEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -99,6 +102,7 @@ data class JobEntryEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -124,6 +128,7 @@ data class ExpenseEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -145,6 +150,7 @@ data class WithdrawalEntity(
     val version: Long = 1L,
     val isSynced: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name,
+    val isDeleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -169,4 +175,50 @@ data class AppSettingsEntity(
     val lockedTractorLabel: String = "",
     val deviceId: String = "",
     val lastSyncTime: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "users")
+data class UserEntity(
+    @PrimaryKey val uid: String,
+    val phoneNumber: String,
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val deviceId: String = "",
+    val isActive: Boolean = true
+)
+
+@Entity(tableName = "businesses")
+data class BusinessEntity(
+    @PrimaryKey val businessId: String,
+    val businessName: String,
+    val ownerUserId: String, // Firebase UID of owner
+    val businessPhone: String = "",
+    val address: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isActive: Boolean = true
+)
+
+@Entity(tableName = "memberships")
+data class MembershipEntity(
+    @PrimaryKey val membershipId: String = UUID.randomUUID().toString(),
+    val businessId: String,
+    val userId: String,
+    val role: String, // "OWNER" or "PARTNER"
+    val status: String = "ACTIVE",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "subscriptions")
+data class SubscriptionEntity(
+    @PrimaryKey val subscriptionId: String = UUID.randomUUID().toString(),
+    val businessId: String,
+    val planId: String = "TRIAL",
+    val planName: String = "14-Day Free Trial",
+    val startDate: Long = System.currentTimeMillis(),
+    val endDate: Long = System.currentTimeMillis() + (14L * 24 * 60 * 60 * 1000), // 14 days from now
+    val status: String = "TRIAL", // TRIAL, ACTIVE, EXPIRED, CANCELLED
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )

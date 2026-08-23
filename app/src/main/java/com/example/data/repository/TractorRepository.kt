@@ -45,7 +45,10 @@ class TractorRepository(private val database: AppDatabase) {
     // 2. Partners
     val allPartners: Flow<List<PartnerEntity>> = partnerDao.getAllPartners()
 
-    suspend fun addPartner(partner: PartnerEntity): Long = partnerDao.insertPartner(partner)
+    suspend fun addPartner(partner: PartnerEntity): Long {
+        val bizId = getSettings().businessId
+        return partnerDao.insertPartner(partner.copy(businessId = bizId))
+    }
 
     suspend fun updatePartner(partner: PartnerEntity) = partnerDao.updatePartner(partner)
 
@@ -54,7 +57,10 @@ class TractorRepository(private val database: AppDatabase) {
     // 3. Tractors
     val allTractors: Flow<List<TractorEntity>> = tractorDao.getAllTractors()
 
-    suspend fun addTractor(tractor: TractorEntity): Long = tractorDao.insertTractor(tractor)
+    suspend fun addTractor(tractor: TractorEntity): Long {
+        val bizId = getSettings().businessId
+        return tractorDao.insertTractor(tractor.copy(businessId = bizId))
+    }
 
     suspend fun updateTractor(tractor: TractorEntity) = tractorDao.updateTractor(tractor)
 
@@ -96,8 +102,10 @@ class TractorRepository(private val database: AppDatabase) {
             }
             existing.id
         } else {
+            val bizId = getSettings().businessId
             customerDao.insertCustomer(
                 CustomerEntity(
+                    businessId = bizId,
                     name = name.trim(),
                     phone = cleanPhone,
                     location = cleanLocation,
@@ -126,12 +134,13 @@ class TractorRepository(private val database: AppDatabase) {
             customerId = addOrFindCustomer(job.customerName, job.customerPhone, job.customerLocation)
         }
 
-        val jobId = jobEntryDao.insertJob(job.copy(customerId = customerId))
+        val bizId = getSettings().businessId
+        val jobId = jobEntryDao.insertJob(job.copy(customerId = customerId, businessId = bizId))
 
         // If optional linked expense was provided, add it
         if (linkedExpense != null && linkedExpense.amount > 0) {
             expenseDao.insertExpense(
-                linkedExpense.copy(relatedJobId = jobId)
+                linkedExpense.copy(relatedJobId = jobId, businessId = bizId)
             )
         }
 
@@ -158,7 +167,9 @@ class TractorRepository(private val database: AppDatabase) {
         val noteDesc = if (note.isNotBlank()) "Note: $note" else ""
         val combinedNotes = listOf(methodDesc, noteDesc).filter { it.isNotBlank() }.joinToString(" • ").ifBlank { "Direct Payment Received" }
 
+        val bizId = getSettings().businessId
         val paymentEntry = JobEntryEntity(
+            businessId = bizId,
             customerId = customer.id,
             customerName = customer.name,
             customerPhone = customer.phone,
@@ -205,7 +216,10 @@ class TractorRepository(private val database: AppDatabase) {
     val allExpenses: Flow<List<ExpenseEntity>> = expenseDao.getAllExpenses()
     val totalExpenses: Flow<Double?> = expenseDao.getTotalExpenses()
 
-    suspend fun addExpense(expense: ExpenseEntity): Long = expenseDao.insertExpense(expense)
+    suspend fun addExpense(expense: ExpenseEntity): Long {
+        val bizId = getSettings().businessId
+        return expenseDao.insertExpense(expense.copy(businessId = bizId))
+    }
 
     suspend fun updateExpense(expense: ExpenseEntity) = expenseDao.updateExpense(expense)
 
@@ -215,8 +229,10 @@ class TractorRepository(private val database: AppDatabase) {
     val allWithdrawals: Flow<List<WithdrawalEntity>> = withdrawalDao.getAllWithdrawals()
     val totalWithdrawn: Flow<Double?> = withdrawalDao.getTotalWithdrawn()
 
-    suspend fun addWithdrawal(withdrawal: WithdrawalEntity): Long =
-        withdrawalDao.insertWithdrawal(withdrawal)
+    suspend fun addWithdrawal(withdrawal: WithdrawalEntity): Long {
+        val bizId = getSettings().businessId
+        return withdrawalDao.insertWithdrawal(withdrawal.copy(businessId = bizId))
+    }
 
     suspend fun updateWithdrawal(withdrawal: WithdrawalEntity) =
         withdrawalDao.updateWithdrawal(withdrawal)

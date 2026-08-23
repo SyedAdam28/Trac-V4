@@ -20,6 +20,14 @@ import com.example.data.entity.JobEntryEntity
 import com.example.data.entity.PartnerEntity
 import com.example.data.entity.TractorEntity
 import com.example.data.entity.WithdrawalEntity
+import com.example.data.entity.UserEntity
+import com.example.data.entity.BusinessEntity
+import com.example.data.entity.MembershipEntity
+import com.example.data.entity.SubscriptionEntity
+import com.example.data.dao.UserDao
+import com.example.data.dao.BusinessDao
+import com.example.data.dao.MembershipDao
+import com.example.data.dao.SubscriptionDao
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,9 +40,13 @@ import kotlinx.coroutines.launch
         JobEntryEntity::class,
         ExpenseEntity::class,
         WithdrawalEntity::class,
-        AppSettingsEntity::class
+        AppSettingsEntity::class,
+        UserEntity::class,
+        BusinessEntity::class,
+        MembershipEntity::class,
+        SubscriptionEntity::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -46,6 +58,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseDao(): ExpenseDao
     abstract fun withdrawalDao(): WithdrawalDao
     abstract fun appSettingsDao(): AppSettingsDao
+    abstract fun userDao(): UserDao
+    abstract fun businessDao(): BusinessDao
+    abstract fun membershipDao(): MembershipDao
+    abstract fun subscriptionDao(): SubscriptionDao
 
     companion object {
         @Volatile
@@ -127,13 +143,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Create users table
+                db.execSQL("CREATE TABLE IF NOT EXISTS `users` (`uid` TEXT NOT NULL, `phoneNumber` TEXT NOT NULL, `name` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `deviceId` TEXT NOT NULL, `isActive` INTEGER NOT NULL, PRIMARY KEY(`uid`))")
+                
+                // Create businesses table
+                db.execSQL("CREATE TABLE IF NOT EXISTS `businesses` (`businessId` TEXT NOT NULL, `businessName` TEXT NOT NULL, `ownerUserId` TEXT NOT NULL, `businessPhone` TEXT NOT NULL, `address` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isActive` INTEGER NOT NULL, PRIMARY KEY(`businessId`))")
+
+                // Create memberships table
+                db.execSQL("CREATE TABLE IF NOT EXISTS `memberships` (`membershipId` TEXT NOT NULL, `businessId` TEXT NOT NULL, `userId` TEXT NOT NULL, `role` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`membershipId`))")
+
+                // Create subscriptions table
+                db.execSQL("CREATE TABLE IF NOT EXISTS `subscriptions` (`subscriptionId` TEXT NOT NULL, `businessId` TEXT NOT NULL, `planId` TEXT NOT NULL, `planName` TEXT NOT NULL, `startDate` INTEGER NOT NULL, `endDate` INTEGER NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`subscriptionId`))")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE partners ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tractors ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE customers ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE job_entries ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE expenses ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE withdrawals ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "aidhunt_trac_v5.db"
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .fallbackToDestructiveMigration(false)
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()

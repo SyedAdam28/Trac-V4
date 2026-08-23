@@ -61,6 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val networkMonitor = NetworkMonitor(application)
     private val syncManager = com.example.data.sync.FirestoreSyncManager(application, database)
     private val accountManager = com.example.data.sync.AccountManager(application)
+    private val authRepository = com.example.data.repository.AuthRepository(database)
 
     private val firebaseAuth: FirebaseAuth? by lazy {
         try {
@@ -604,17 +605,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val credential = PhoneAuthProvider.getCredential(verificationId, otp)
                 auth.signInWithCredential(credential).await()
                 
-                // Update settings
-                val current = settings.value
-                repository.updateSettings(
-                    current.copy(
-                        isLoggedIn = true,
-                        activePartnerPhone = phone
-                    )
-                )
-                pushUnsyncedToCloud()
-                _isSyncing.value = false
-                onComplete(true, null)
+                val user = authRepository.syncUserToFirestore("Partner")
+                if (user != null) {
+                    val memberships = authRepository.checkExistingMemberships(user.uid)
+                    if (memberships.isNotEmpty()) {
+                        val activeMembership = memberships.first()
+                        authRepository.loadBusinessData(activeMembership.businessId)
+                        
+                        val current = settings.value
+                        repository.updateSettings(
+                            current.copy(
+                                isLoggedIn = true,
+                                activePartnerPhone = phone,
+                                businessId = activeMembership.businessId
+                            )
+                        )
+                        pushUnsyncedToCloud()
+                        _isSyncing.value = false
+                        onComplete(true, null)
+                    } else {
+                        _isSyncing.value = false
+                        onComplete(false, "No business account linked to this phone number.")
+                    }
+                } else {
+                    _isSyncing.value = false
+                    onComplete(false, "Failed to sync user data.")
+                }
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onComplete(false, e.message ?: "Authentication failed")
@@ -1083,31 +1099,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val newBusinessId = "TRAC-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
-
-                // CLEAN SLATE: Wipe demo/previous data
-                clearLocalDataForCleanAccount(
-                    newBusinessId = newBusinessId,
-                    bName = bName,
-                    oName = oName,
-                    contactInfo = cleanPhone
-                )
-
-                val profile = com.example.data.sync.UserAccountProfile(
-                    email = "",
-                    phone = cleanPhone,
-                    businessId = newBusinessId,
-                    businessName = bName,
-                    ownerName = oName,
-                    role = "OWNER",
-                    authProvider = "PHONE",
-                    createdAt = System.currentTimeMillis()
-                )
-                accountManager.saveAccountProfile(profile)
-
-                pushUnsyncedToCloud()
-                _isSyncing.value = false
-                onComplete(true, null)
+                val user = authRepository.syncUserToFirestore(oName)
+                if (user != null) {
+                    val business = authRepository.createBusiness(user.uid, bName, oName, cleanPhone)
+                    
+                    // CLEAN SLATE: Wipe demo/previous data
+                    clearLocalDataForCleanAccount(
+                        newBusinessId = business.businessId,
+                        bName = business.businessName,
+                        oName = oName,
+                        contactInfo = cleanPhone
+                    )
+                    
+                    pushUnsyncedToCloud()
+                    _isSyncing.value = false
+                    onComplete(true, null)
+                } else {
+                    _isSyncing.value = false
+                    onComplete(false, "Failed to register user.")
+                }
             } catch (e: Exception) {
                 _isSyncing.value = false
                 Log.e("MainViewModel", "createAccountWithPhone error: ${e.message}", e)

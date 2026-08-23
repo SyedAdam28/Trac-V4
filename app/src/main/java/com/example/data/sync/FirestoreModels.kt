@@ -146,7 +146,7 @@ object FirestoreMappers {
             createdBy = this.createdBy,
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -168,6 +168,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )
@@ -198,7 +199,7 @@ object FirestoreMappers {
             createdBy = this.createdBy.ifBlank { this.addedByPartner },
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -237,6 +238,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )
@@ -259,7 +261,7 @@ object FirestoreMappers {
             createdBy = this.createdBy.ifBlank { this.addedByPartner },
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -290,6 +292,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )
@@ -309,7 +312,7 @@ object FirestoreMappers {
             createdBy = this.createdBy.ifBlank { this.partnerName },
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -335,6 +338,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )
@@ -353,7 +357,7 @@ object FirestoreMappers {
             createdBy = this.createdBy,
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -374,6 +378,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )
@@ -392,7 +397,7 @@ object FirestoreMappers {
             createdBy = this.createdBy,
             deviceId = this.deviceId.ifBlank { deviceId },
             version = this.version,
-            isDeleted = false,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = if (this.updatedAt > 0) this.updatedAt else this.createdAt
         )
@@ -417,6 +422,7 @@ object FirestoreMappers {
             version = this.version,
             isSynced = true,
             syncStatus = SyncStatus.SYNCED.name,
+            isDeleted = this.isDeleted,
             createdAt = this.createdAt,
             updatedAt = this.updatedAt
         )

@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PartnerDao {
-    @Query("SELECT * FROM partners ORDER BY id ASC")
+    @Query("SELECT * FROM partners WHERE isDeleted = 0 ORDER BY id ASC")
     fun getAllPartners(): Flow<List<PartnerEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -29,13 +29,13 @@ interface PartnerDao {
     @Delete
     suspend fun deletePartner(partner: PartnerEntity)
 
-    @Query("SELECT COUNT(*) FROM partners")
+    @Query("SELECT COUNT(*) FROM partners WHERE isDeleted = 0")
     suspend fun getCount(): Int
 
     @Query("SELECT * FROM partners WHERE uuid = :uuid LIMIT 1")
     suspend fun getPartnerByUuid(uuid: String): PartnerEntity?
 
-    @Query("SELECT * FROM partners WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM partners WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedPartners(): List<PartnerEntity>
 
     @Query("UPDATE partners SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -47,7 +47,7 @@ interface PartnerDao {
 
 @Dao
 interface TractorDao {
-    @Query("SELECT * FROM tractors ORDER BY id ASC")
+    @Query("SELECT * FROM tractors WHERE isDeleted = 0 ORDER BY id ASC")
     fun getAllTractors(): Flow<List<TractorEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -59,13 +59,13 @@ interface TractorDao {
     @Delete
     suspend fun deleteTractor(tractor: TractorEntity)
 
-    @Query("SELECT COUNT(*) FROM tractors")
+    @Query("SELECT COUNT(*) FROM tractors WHERE isDeleted = 0")
     suspend fun getCount(): Int
 
     @Query("SELECT * FROM tractors WHERE uuid = :uuid LIMIT 1")
     suspend fun getTractorByUuid(uuid: String): TractorEntity?
 
-    @Query("SELECT * FROM tractors WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM tractors WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedTractors(): List<TractorEntity>
 
     @Query("UPDATE tractors SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -77,16 +77,16 @@ interface TractorDao {
 
 @Dao
 interface CustomerDao {
-    @Query("SELECT * FROM customers ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM customers WHERE isDeleted = 0 ORDER BY updatedAt DESC")
     fun getAllCustomers(): Flow<List<CustomerEntity>>
 
-    @Query("SELECT * FROM customers WHERE balanceDue > 0 ORDER BY balanceDue DESC")
+    @Query("SELECT * FROM customers WHERE isDeleted = 0 AND balanceDue > 0 ORDER BY balanceDue DESC")
     fun getCustomersWithDue(): Flow<List<CustomerEntity>>
 
     @Query("SELECT * FROM customers WHERE id = :id LIMIT 1")
     suspend fun getCustomerById(id: Long): CustomerEntity?
 
-    @Query("SELECT * FROM customers WHERE LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%'")
+    @Query("SELECT * FROM customers WHERE isDeleted = 0 AND (LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%')")
     fun searchCustomers(query: String): Flow<List<CustomerEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -98,7 +98,7 @@ interface CustomerDao {
     @Delete
     suspend fun deleteCustomer(customer: CustomerEntity)
 
-    @Query("SELECT * FROM customers WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM customers WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedCustomers(): List<CustomerEntity>
 
     @Query("UPDATE customers SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -110,7 +110,7 @@ interface CustomerDao {
     @Query("SELECT * FROM customers WHERE uuid = :uuid LIMIT 1")
     suspend fun getCustomerByUuid(uuid: String): CustomerEntity?
 
-    @Query("SELECT COUNT(*) FROM customers WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT COUNT(*) FROM customers WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     fun getUnsyncedCount(): Flow<Int>
 
     @Query("DELETE FROM customers")
@@ -119,13 +119,13 @@ interface CustomerDao {
 
 @Dao
 interface JobEntryDao {
-    @Query("SELECT * FROM job_entries ORDER BY startTimeMillis DESC")
+    @Query("SELECT * FROM job_entries WHERE isDeleted = 0 ORDER BY startTimeMillis DESC")
     fun getAllJobs(): Flow<List<JobEntryEntity>>
 
-    @Query("SELECT * FROM job_entries WHERE customerId = :customerId ORDER BY startTimeMillis DESC")
+    @Query("SELECT * FROM job_entries WHERE isDeleted = 0 AND customerId = :customerId ORDER BY startTimeMillis DESC")
     fun getJobsForCustomer(customerId: Long): Flow<List<JobEntryEntity>>
 
-    @Query("SELECT * FROM job_entries WHERE LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%'")
+    @Query("SELECT * FROM job_entries WHERE isDeleted = 0 AND (LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%')")
     fun searchJobs(query: String): Flow<List<JobEntryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -137,13 +137,13 @@ interface JobEntryDao {
     @Delete
     suspend fun deleteJob(job: JobEntryEntity)
 
-    @Query("SELECT SUM(amountReceived) FROM job_entries")
+    @Query("SELECT SUM(amountReceived) FROM job_entries WHERE isDeleted = 0")
     fun getTotalReceived(): Flow<Double?>
 
-    @Query("SELECT SUM(pendingAmount) FROM job_entries")
+    @Query("SELECT SUM(pendingAmount) FROM job_entries WHERE isDeleted = 0")
     fun getTotalPending(): Flow<Double?>
 
-    @Query("SELECT * FROM job_entries WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM job_entries WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedJobs(): List<JobEntryEntity>
 
     @Query("UPDATE job_entries SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -155,7 +155,7 @@ interface JobEntryDao {
     @Query("SELECT * FROM job_entries WHERE uuid = :uuid LIMIT 1")
     suspend fun getJobByUuid(uuid: String): JobEntryEntity?
 
-    @Query("SELECT COUNT(*) FROM job_entries WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT COUNT(*) FROM job_entries WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     fun getUnsyncedCount(): Flow<Int>
 
     @Query("DELETE FROM job_entries")
@@ -164,7 +164,7 @@ interface JobEntryDao {
 
 @Dao
 interface ExpenseDao {
-    @Query("SELECT * FROM expenses ORDER BY dateTimestamp DESC")
+    @Query("SELECT * FROM expenses WHERE isDeleted = 0 ORDER BY dateTimestamp DESC")
     fun getAllExpenses(): Flow<List<ExpenseEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -176,10 +176,10 @@ interface ExpenseDao {
     @Delete
     suspend fun deleteExpense(expense: ExpenseEntity)
 
-    @Query("SELECT SUM(amount) FROM expenses")
+    @Query("SELECT SUM(amount) FROM expenses WHERE isDeleted = 0")
     fun getTotalExpenses(): Flow<Double?>
 
-    @Query("SELECT * FROM expenses WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM expenses WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedExpenses(): List<ExpenseEntity>
 
     @Query("UPDATE expenses SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -191,7 +191,7 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE uuid = :uuid LIMIT 1")
     suspend fun getExpenseByUuid(uuid: String): ExpenseEntity?
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT COUNT(*) FROM expenses WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     fun getUnsyncedCount(): Flow<Int>
 
     @Query("DELETE FROM expenses")
@@ -200,7 +200,7 @@ interface ExpenseDao {
 
 @Dao
 interface WithdrawalDao {
-    @Query("SELECT * FROM withdrawals ORDER BY timestamp DESC")
+    @Query("SELECT * FROM withdrawals WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getAllWithdrawals(): Flow<List<WithdrawalEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -212,10 +212,10 @@ interface WithdrawalDao {
     @Delete
     suspend fun deleteWithdrawal(withdrawal: WithdrawalEntity)
 
-    @Query("SELECT SUM(amount) FROM withdrawals")
+    @Query("SELECT SUM(amount) FROM withdrawals WHERE isDeleted = 0")
     fun getTotalWithdrawn(): Flow<Double?>
 
-    @Query("SELECT * FROM withdrawals WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT * FROM withdrawals WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     suspend fun getUnsyncedWithdrawals(): List<WithdrawalEntity>
 
     @Query("UPDATE withdrawals SET isSynced = 1, syncStatus = 'SYNCED' WHERE id IN (:ids)")
@@ -227,7 +227,7 @@ interface WithdrawalDao {
     @Query("SELECT * FROM withdrawals WHERE uuid = :uuid LIMIT 1")
     suspend fun getWithdrawalByUuid(uuid: String): WithdrawalEntity?
 
-    @Query("SELECT COUNT(*) FROM withdrawals WHERE isSynced = 0 OR syncStatus != 'SYNCED'")
+    @Query("SELECT COUNT(*) FROM withdrawals WHERE isDeleted = 0 AND (isSynced = 0 OR syncStatus != 'SYNCED')")
     fun getUnsyncedCount(): Flow<Int>
 
     @Query("DELETE FROM withdrawals")
@@ -244,4 +244,67 @@ interface AppSettingsDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateSettings(settings: AppSettingsEntity)
+}
+
+@Dao
+interface UserDao {
+    @Query("SELECT * FROM users WHERE uid = :uid LIMIT 1")
+    fun getUserFlow(uid: String): Flow<UserEntity?>
+
+    @Query("SELECT * FROM users WHERE uid = :uid LIMIT 1")
+    suspend fun getUser(uid: String): UserEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUser(user: UserEntity)
+
+    @Update
+    suspend fun updateUser(user: UserEntity)
+}
+
+@Dao
+interface BusinessDao {
+    @Query("SELECT * FROM businesses WHERE businessId = :businessId LIMIT 1")
+    fun getBusinessFlow(businessId: String): Flow<BusinessEntity?>
+
+    @Query("SELECT * FROM businesses WHERE businessId = :businessId LIMIT 1")
+    suspend fun getBusiness(businessId: String): BusinessEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBusiness(business: BusinessEntity)
+
+    @Update
+    suspend fun updateBusiness(business: BusinessEntity)
+}
+
+@Dao
+interface MembershipDao {
+    @Query("SELECT * FROM memberships WHERE userId = :userId")
+    fun getMembershipsForUserFlow(userId: String): Flow<List<MembershipEntity>>
+
+    @Query("SELECT * FROM memberships WHERE userId = :userId")
+    suspend fun getMembershipsForUser(userId: String): List<MembershipEntity>
+
+    @Query("SELECT * FROM memberships WHERE businessId = :businessId AND userId = :userId LIMIT 1")
+    suspend fun getMembership(businessId: String, userId: String): MembershipEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMembership(membership: MembershipEntity)
+
+    @Update
+    suspend fun updateMembership(membership: MembershipEntity)
+}
+
+@Dao
+interface SubscriptionDao {
+    @Query("SELECT * FROM subscriptions WHERE businessId = :businessId LIMIT 1")
+    fun getSubscriptionForBusinessFlow(businessId: String): Flow<SubscriptionEntity?>
+
+    @Query("SELECT * FROM subscriptions WHERE businessId = :businessId LIMIT 1")
+    suspend fun getSubscriptionForBusiness(businessId: String): SubscriptionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubscription(subscription: SubscriptionEntity)
+
+    @Update
+    suspend fun updateSubscription(subscription: SubscriptionEntity)
 }

@@ -86,8 +86,7 @@ class FirestoreSyncManager(
      */
     suspend fun getBusinessId(): String = withContext(Dispatchers.IO) {
         val settings = settingsDao.getSettingsOnce()
-        val bid = settings?.businessId?.ifBlank { settings.sharedAccountId }
-        if (!bid.isNullOrBlank()) bid else "AIDHUNT-TRAC-SHARED-01"
+        settings?.businessId ?: ""
     }
 
     /**
@@ -110,6 +109,11 @@ class FirestoreSyncManager(
         }
 
         val businessId = getBusinessId()
+        if (businessId.isBlank()) {
+            Log.w(TAG, "No valid businessId found. Aborting sync.")
+            _syncState.value = SyncState.Error("No active business account found.")
+            return@withContext false
+        }
         val deviceId = getDeviceId()
 
         _syncState.value = SyncState.Syncing
@@ -164,22 +168,26 @@ class FirestoreSyncManager(
         try {
             val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
             val memberRef = db.collection("businesses").document(businessId)
-                .collection("members").document(uid)
+                .collection("memberships").document(uid) // Use 'memberships' to comply with firestore.rules
+            
             // Only set role if document doesn't exist yet to avoid overwriting OWNER -> PARTNER
             val existing = memberRef.get().await()
             if (!existing.exists()) {
                 memberRef.set(
                     mapOf(
-                        "uid" to uid,
+                        "membershipId" to uid,
+                        "businessId" to businessId,
+                        "userId" to uid,
                         "role" to "OWNER",
-                        "joinedAt" to System.currentTimeMillis(),
-                        "deviceId" to getDeviceId()
+                        "status" to "ACTIVE",
+                        "createdAt" to System.currentTimeMillis(),
+                        "updatedAt" to System.currentTimeMillis()
                     )
                 ).await()
-                Log.d(TAG, "Member registered for businessId=$businessId uid=$uid")
+                Log.d(TAG, "Membership registered for businessId=$businessId uid=$uid")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not register member (non-fatal): ${e.message}")
+            Log.w(TAG, "Could not register membership (non-fatal): ${e.message}")
         }
     }
 
